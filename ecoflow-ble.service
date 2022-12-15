@@ -1,0 +1,15 @@
+[Unit]
+Description=Ecoflow monitor
+
+[Service]
+Type=notify
+WorkingDirectory=/home/anv/dev/ecoflow-ble/bin/Debug/net6.0
+ExecStart=/home/anv/dev/ecoflow-ble/bin/Debug/net6.0/ecoflow-ble
+SyslogIdentifier=Ecoflow
+User=anv
+
+Restart=always
+RestartSec=5 
+
+[Install]
+WantedBy=multi-user.target

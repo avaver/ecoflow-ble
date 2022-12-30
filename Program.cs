@@ -5,7 +5,6 @@ IHost host = Host.CreateDefaultBuilder(args)
     .ConfigureServices(services => 
     {
         services.AddSingleton<Bluetooth>();
-        services.AddSingleton<DbClient>();
         services.AddSingleton<MQTTClient>();
         services.AddHostedService<Worker>();
     })

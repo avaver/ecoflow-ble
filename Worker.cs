@@ -1,5 +1,4 @@
-using bluez.DBus;
-using Tmds.DBus;
+using System.Text.Json;
 
 namespace ecoflow_ble;
 
@@ -9,17 +8,18 @@ public class Worker : BackgroundService
     private const string CharacteristicUUID = "00000003-0000-1000-8000-00805f9b34fb";
     private readonly ILogger<Worker> _logger;
     private readonly Bluetooth _bt;
-    private readonly DbClient _db;
     private readonly MQTTClient _mqtt;
     private readonly IHostApplicationLifetime _app;
     private BtDevice? _device;
-    private static DateTime _lastUpdate = DateTime.UtcNow;
+    private static DateTime _lastUpdatePd = DateTime.UtcNow;
+    private static DateTime _lastUpdateBms0 = DateTime.UtcNow;
+    private static DateTime _lastUpdateBms1 = DateTime.UtcNow;
+    private static DateTime _lastUpdateInverter = DateTime.UtcNow;
 
 
-    public Worker(Bluetooth bt, DbClient db, MQTTClient mqtt, IHostApplicationLifetime app, ILogger<Worker> logger)
+    public Worker(Bluetooth bt, MQTTClient mqtt, IHostApplicationLifetime app, ILogger<Worker> logger)
     {
         _bt = bt;
-        _db = db;
         _mqtt = mqtt;
         _app = app;
         _logger = logger;
@@ -132,25 +132,123 @@ public class Worker : BackgroundService
     private async Task OnValueChanged(GattCharacteristic ch, GattCharacteristicValueEventArgs args)
     {
         var data = args.Value;
-        if (data.Length >= 51 && data[0] == 0xaa && data[1] == 0x02 && data[2] == 0x7b && (DateTime.UtcNow - _lastUpdate) > TimeSpan.FromSeconds(5))
+        var packets = GetPackets(data);
+        foreach(var p in packets)
         {
-            _lastUpdate = DateTime.UtcNow;
-            var battery = data[30];
-            var temp = data[51];
-            var inPower = BitConverter.ToInt16(data, 33);
-            var outPower = BitConverter.ToInt16(data, 31);
-            _logger.LogInformation("battery: {Battery}%, in: {In}W, out: {Out}W, temp: {Temp}°C", battery, inPower, outPower, temp);
-            // try
-            // {
-            //     _db.Write(battery, inPower, outPower, temp);
-            // }
-            // catch (Exception ex)
-            // {
-            //     _logger.LogWarning(ex, "Writing to DB failed");
-            // }
+            switch (p.GetPacketType())
+            {
+                case PacketType.PD:
+                    await ProcessPd(p);
+                    break;
+                case PacketType.BMS:
+                    await ProcessBms(p);
+                    break;
+                case PacketType.Inverter:
+                    await ProcessInverter(p);
+                    break;
+            }
+        }
+    }
+
+    private List<byte[]> GetPackets(byte[] bytes)
+    {
+        var result = new List<byte[]>();
+        while (bytes[0] == 0xaa && bytes[1] == 0x02)
+        {
+            var size = BitConverter.ToInt16(bytes, 2);
+            var packet = new byte[18 + size];
+            Array.Copy(bytes, packet, packet.Length);
+            result.Add(packet);
+            if (bytes.Length <= packet.Length) break;
+            var bytesNew = new byte[bytes.Length - packet.Length];
+            Array.Copy(bytes, packet.Length, bytesNew, 0, bytesNew.Length);
+            bytes = bytesNew;
+        }
+        return result;
+    }
+
+    private async Task ProcessPd(byte[] packet)
+    {
+        var data = packet.DecodePayload();
+        if ((DateTime.UtcNow - _lastUpdatePd) > TimeSpan.FromSeconds(5))
+        {
+            _lastUpdatePd = DateTime.UtcNow;
+            var battery = data[12];
+            var inPower = BitConverter.ToInt16(data, 15);
+            var outPower = BitConverter.ToInt16(data, 13);
+            var remainingMins = BitConverter.ToInt32(data, 17);
             try
             {
-                await _mqtt.Send(battery, inPower, outPower, temp, _app.ApplicationStopping);
+                var payload = JsonSerializer.Serialize(new {battery, inPower, outPower, remainingMins});
+                _logger.LogInformation(payload);
+                await _mqtt.Send("ecoflow_pd", payload, _app.ApplicationStopping);
+            }
+            catch (Exception ex) 
+            {
+                _logger.LogWarning(ex, "Sending via MQTT failed");
+            }
+        }
+    }
+
+    private async Task ProcessBms(byte[] packet)
+    {
+        var cellId = packet[16];
+        var data = packet.DecodePayload();
+
+        if ((DateTime.UtcNow - (cellId == 0 ? _lastUpdateBms0 : _lastUpdateBms1)) > TimeSpan.FromSeconds(5))
+        {
+            if (cellId == 0) _lastUpdateBms0 = DateTime.UtcNow;
+            else _lastUpdateBms1 = DateTime.UtcNow;
+
+            var level = data[9];
+            var temp = data[18];
+            var cycles = data[32];
+            var voltage = BitConverter.ToInt32(data, 10) / 1000.0;
+            var inPower = BitConverter.ToInt32(data, 55);
+            var outPower = BitConverter.ToInt32(data, 59);
+            var remainingMins = BitConverter.ToInt32(data, 63);
+            try
+            {
+                var payload = JsonSerializer.Serialize(new {cellId, level, temp, cycles, voltage, inPower, outPower, remainingMins});
+                _logger.LogInformation(payload);
+                await _mqtt.Send($"ecoflow_bms_{cellId}", payload, _app.ApplicationStopping);
+            }
+            catch (Exception ex) 
+            {
+                _logger.LogWarning(ex, "Sending via MQTT failed");
+            }
+        }
+    }
+
+    private async Task ProcessInverter(byte[] packet)
+    {
+        var data = packet.DecodePayload();
+        if ((DateTime.UtcNow - _lastUpdateInverter) > TimeSpan.FromSeconds(5))
+        {
+            _lastUpdateInverter = DateTime.UtcNow;
+            var acInType = data[6];
+            var acInPower = BitConverter.ToInt16(data, 7);
+            var acOutPower = BitConverter.ToInt16(data, 9);
+            var acInVoltage = BitConverter.ToInt32(data, 21) / 1000.0;
+            var acOutVoltage = BitConverter.ToInt32(data, 12) / 1000.0;
+            var acInCurrent = BitConverter.ToInt32(data, 25) / 1000.0;
+            var acOutCurrent = BitConverter.ToInt32(data, 16) / 1000.0;
+            var acOutTemp = BitConverter.ToInt16(data, 30);
+            try
+            {
+                var payload = JsonSerializer.Serialize(new 
+                    {
+                        acInType, 
+                        acInPower, 
+                        acOutPower, 
+                        acInVoltage, 
+                        acOutVoltage, 
+                        acInCurrent, 
+                        acOutCurrent, 
+                        acOutTemp
+                    });
+                _logger.LogInformation(payload);
+                await _mqtt.Send("ecoflow_inverter", payload, _app.ApplicationStopping);
             }
             catch (Exception ex) 
             {

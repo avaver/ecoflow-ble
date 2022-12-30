@@ -1,4 +1,3 @@
-using System.Text.Json;
 using MQTTnet;
 using MQTTnet.Client;
 using MQTTnet.Protocol;
@@ -32,11 +31,12 @@ public class MQTTClient: IDisposable
         await _client.ConnectAsync(options);
     }
 
-    public async Task Send(byte battery, short inPower, short outPower, byte temp, CancellationToken token = default)
+    public async Task Send(string topic, string payload, CancellationToken token = default)
     {
+        if (!_client.IsConnected) await Connect();
         var msg = new MqttApplicationMessageBuilder()
-            .WithTopic("ecoflow")
-            .WithPayload(JsonSerializer.Serialize(new { battery, inPower, outPower, temp }))
+            .WithTopic(topic)
+            .WithPayload(payload)
             .WithQualityOfServiceLevel(MqttQualityOfServiceLevel.ExactlyOnce)
             .Build();
         await _client.PublishAsync(msg, token);

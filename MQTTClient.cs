@@ -42,6 +42,23 @@ public class MQTTClient: IDisposable
         await _client.PublishAsync(msg, token);
     }
 
+/*
+{
+  "dev": {
+    "ids": "test_device_id",
+    "name": "Test Device Name",
+    "mdl": "Device Model",
+    "mf": "Device Manufacturer 2"
+  },
+  "uniq_id": "test_sensor_2",
+  "name": "Test Sensor 2", 
+  "dev_cla": "voltage",
+  "stat_cla": "measurement",
+  "unit_of_meas": "V", 
+  "stat_t": "homeassistant/sensor/test_sensor_2/state"
+}
+*/
+
     public void Dispose()
     {
         _logger.LogInformation("Disconnecting MQTT client");

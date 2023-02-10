@@ -180,7 +180,7 @@ public class Worker : BackgroundService
             try
             {
                 var payload = JsonSerializer.Serialize(new {battery, inPower, outPower, remainingMins});
-                _logger.LogInformation(payload);
+                //_logger.LogInformation(payload);
                 await _mqtt.Send("ecoflow_pd", payload, _app.ApplicationStopping);
             }
             catch (Exception ex) 
@@ -210,7 +210,7 @@ public class Worker : BackgroundService
             try
             {
                 var payload = JsonSerializer.Serialize(new {cellId, level, temp, cycles, voltage, inPower, outPower, remainingMins});
-                _logger.LogInformation(payload);
+                //_logger.LogInformation(payload);
                 await _mqtt.Send($"ecoflow_bms_{cellId}", payload, _app.ApplicationStopping);
             }
             catch (Exception ex) 
@@ -247,7 +247,7 @@ public class Worker : BackgroundService
                         acOutCurrent, 
                         acOutTemp
                     });
-                _logger.LogInformation(payload);
+                //_logger.LogInformation(payload);
                 await _mqtt.Send("ecoflow_inverter", payload, _app.ApplicationStopping);
             }
             catch (Exception ex) 
